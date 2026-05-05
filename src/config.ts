@@ -1,0 +1,23 @@
+import path from "node:path";
+
+export const config = {
+  port: Number(process.env.PORT) || 3000,
+  dbPath: process.env.DB_PATH || path.join(process.cwd(), "data.db"),
+  logDir: process.env.LOG_DIR || path.join(process.cwd(), "logs"),
+  browserDataDir: process.env.BROWSER_DATA_DIR || path.join(process.cwd(), "browser-data"),
+  polling: {
+    intervalMs: Number(process.env.POLLING_INTERVAL_MS) || 90_000, // 1.5 min
+  },
+  messaging: {
+    maxPerHour: Number(process.env.MAX_MESSAGES_PER_HOUR) || 5,
+    delayMinMs: 60_000,  // 1 min
+    delayMaxMs: 180_000, // 3 min
+  },
+  smtp: {
+    host: process.env.SMTP_HOST || "",
+    port: Number(process.env.SMTP_PORT) || 587,
+    user: process.env.SMTP_USER || "",
+    pass: process.env.SMTP_PASS || "",
+    from: process.env.SMTP_FROM || "",
+  },
+};
