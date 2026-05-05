@@ -16,7 +16,7 @@ Application qui scrape les nouvelles annonces d'appartement sur LeBonCoin et SeL
 | Composant | Technologie |
 |-----------|-------------|
 | Backend | Node.js + TypeScript, Express.js |
-| Scraping & Messaging | Puppeteer (headless, contexte persistant) |
+| Scraping & Messaging | puppeteer-extra + stealth plugin (headless, userDataDir persistant) |
 | Frontend | React + Vite + TailwindCSS |
 | Base de données | SQLite (via better-sqlite3) |
 | Email | Nodemailer (SMTP, compte personnel) |
@@ -32,7 +32,7 @@ Application qui scrape les nouvelles annonces d'appartement sur LeBonCoin et SeL
 ┌─────────────────────▼───────────────────────────┐
 │              Serveur Backend (Node.js)           │
 ├─────────────────────────────────────────────────┤
-│  Scheduler (setInterval 1-2min)                 │
+│  Scheduler (recursive setTimeout 1-2min)        │
 │  ├── Scraper LeBonCoin (Puppeteer)              │
 │  ├── Scraper SeLoger (Puppeteer)                │
 │  ├── Déduplication (SQLite)                     │
@@ -88,23 +88,29 @@ Contrainte UNIQUE sur (platform, external_id).
 | surface_min | INTEGER | Surface minimale en m² |
 | rooms_min | INTEGER | Nombre de pièces minimum |
 | active | INTEGER | 1 = actif, 0 = inactif |
+| created_at | TEXT | Timestamp ISO |
+| updated_at | TEXT | Timestamp ISO |
 
 ### message_templates
 | Colonne | Type | Description |
 |---------|------|-------------|
 | id | INTEGER PK | Auto-increment |
 | name | TEXT | Nom du template |
-| body | TEXT | Contenu du message |
+| body | TEXT | Contenu du message (supporte variables : {{title}}, {{price}}, {{city}}, {{surface}}, {{url}}) |
 | is_default | INTEGER | 1 = template par défaut |
+| created_at | TEXT | Timestamp ISO |
+| updated_at | TEXT | Timestamp ISO |
 
 ### sessions
 | Colonne | Type | Description |
 |---------|------|-------------|
 | id | INTEGER PK | Auto-increment |
 | platform | TEXT | "leboncoin" ou "seloger" |
-| cookies_path | TEXT | Chemin vers le fichier cookies |
+| user_data_dir | TEXT | Chemin vers le userDataDir Puppeteer de la plateforme |
 | last_valid_at | TEXT | Dernière vérification valide |
 | status | TEXT | "valid", "expired", "error" |
+
+Note : chaque plateforme a son propre `userDataDir` Puppeteer qui contient cookies, localStorage, et tout l'état du navigateur. Pas de gestion manuelle de cookies — Puppeteer persiste tout automatiquement via le userDataDir.
 
 ## Gestion des sessions & anti-bot
 
@@ -115,11 +121,19 @@ Contrainte UNIQUE sur (platform, external_id).
 - Si session expirée : alerte sur le dashboard, bouton "Se reconnecter"
 
 ### Anti-bot
-- Un seul contexte navigateur persistant (pas de nouvelle instance à chaque cycle)
-- Délais aléatoires entre les actions (scroll, clics, navigation)
-- Rotation occasionnelle du user-agent
+- `puppeteer-extra` avec `puppeteer-extra-plugin-stealth` (obligatoire — LeBonCoin utilise DataDome, SeLoger utilise Imperva/Akamai)
+- Un seul contexte navigateur persistant via `userDataDir` (pas de nouvelle instance à chaque cycle)
+- Délais aléatoires entre les actions (scroll, clics, navigation) — humanisation du comportement
+- Fingerprint navigateur cohérent (résolution, timezone, langue, WebGL)
 - Détection CAPTCHA → pause automatique + notification dashboard
-- Trop d'échecs consécutifs → pause automatique (protection anti-ban)
+- Trop d'échecs consécutifs → backoff exponentiel (pause 5min, 15min, 1h)
+- Stratégie de dégradation : si scraping échoue de façon répétée, augmenter l'intervalle de polling automatiquement
+
+### Rate-limiting messages
+- Maximum configurable de messages par heure (défaut : 5/heure)
+- Délai aléatoire entre chaque envoi de message (1-3 min)
+- Les messages sont mis en queue et envoyés séquentiellement, pas immédiatement après détection
+- Risque de ban documenté : utiliser un compte secondaire est recommandé pour le messaging
 
 ## Flux d'exécution
 
@@ -159,8 +173,48 @@ Toutes les 1-2 min :
 ### API REST (Express)
 Endpoints CRUD pour : preferences, message_templates, listings, sessions, stats.
 
+## Template variables
+
+Les templates de message supportent l'interpolation de variables via la syntaxe `{{variable}}` :
+
+| Variable | Valeur |
+|----------|--------|
+| `{{title}}` | Titre de l'annonce |
+| `{{price}}` | Prix en euros |
+| `{{city}}` | Ville/quartier |
+| `{{surface}}` | Surface en m² |
+| `{{rooms}}` | Nombre de pièces |
+| `{{url}}` | Lien vers l'annonce |
+
+Exemple : "Bonjour, je suis intéressé par votre annonce {{title}} à {{price}}€. Seriez-vous disponible pour une visite ?"
+
+## Logging & observabilité
+
+- Logs structurés (JSON) écrits sur stdout + fichier rotatif (`logs/app.log`, rotation quotidienne, rétention 7 jours)
+- Niveaux : error, warn, info, debug
+- Librairie : `pino` (performant, structured logging)
+- Les erreurs critiques (session expirée, CAPTCHA, ban détecté) sont aussi surfacées dans le dashboard
+
+## Scheduling robuste
+
+- Utilisation de `setTimeout` récursif (pas `setInterval`) pour éviter le drift et l'overlap
+- Chaque cycle attend que le précédent soit terminé avant de relancer
+- Si un cycle dépasse le temps attendu, le suivant démarre immédiatement après (pas d'accumulation)
+
+## Graceful shutdown
+
+- Gestion des signaux SIGTERM/SIGINT
+- Fermeture propre du navigateur Puppeteer
+- Flush des logs et fermeture de la DB SQLite
+- Process supervisé via `pm2` pour redémarrage automatique en cas de crash
+
+## Email — clarification
+
+L'email n'est envoyé que si l'adresse email du propriétaire/agence est explicitement visible sur la page de l'annonce. La plupart des annonces sur LeBonCoin/SeLoger n'exposent pas l'email directement (formulaire de contact uniquement). L'email est donc un canal opportuniste, pas le canal principal.
+
 ## Déploiement
-- Process Node.js unique qui tourne en continu
+- Process Node.js unique supervisé par pm2
 - Pas de containerisation nécessaire
 - PC local toujours allumé
 - Le backend sert aussi le frontend (build statique React servi par Express)
+- Endpoint `/health` pour vérifier que le process est actif
