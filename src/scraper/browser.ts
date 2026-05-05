@@ -21,15 +21,15 @@ function getChromePath(): string {
   if (process.env.CHROME_PATH) return process.env.CHROME_PATH;
 
   const candidates = [
-    // WSL accessing Windows Chrome
-    "/mnt/c/Program Files/Google/Chrome/Application/chrome.exe",
-    "/mnt/c/Program Files (x86)/Google/Chrome/Application/chrome.exe",
-    // Linux
-    "/usr/bin/google-chrome",
+    // Linux (prefer native Chrome in WSL)
     "/usr/bin/google-chrome-stable",
+    "/usr/bin/google-chrome",
     "/usr/bin/chromium-browser",
     // macOS
     "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+    // WSL accessing Windows Chrome (fallback — may not work well)
+    "/mnt/c/Program Files/Google/Chrome/Application/chrome.exe",
+    "/mnt/c/Program Files (x86)/Google/Chrome/Application/chrome.exe",
   ];
 
   for (const candidate of candidates) {
@@ -53,7 +53,7 @@ export async function getBrowser(platform: string): Promise<Browser> {
   logger.info({ platform, userDataDir, chromePath: chromePath || "bundled" }, "Launching browser");
 
   const launchOptions: Parameters<typeof puppeteer.launch>[0] = {
-    headless: true,
+    headless: "new",
     userDataDir,
     args: [
       "--no-sandbox",
@@ -80,7 +80,7 @@ export async function launchLoginBrowser(platform: string): Promise<Browser> {
   const launchOptions: Parameters<typeof puppeteer.launch>[0] = {
     headless: false,
     userDataDir,
-    args: ["--window-size=1920,1080", "--disable-blink-features=AutomationControlled"],
+    args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage", "--window-size=1920,1080", "--disable-blink-features=AutomationControlled"],
   };
 
   if (chromePath) {
@@ -105,6 +105,34 @@ export async function closeAllBrowsers(): Promise<void> {
     await browser.close();
   }
   browsers.clear();
+}
+
+export async function solveCaptchaManually(platform: string, url: string): Promise<void> {
+  logger.warn({ platform, url }, "CAPTCHA detected — opening visible browser for manual solve");
+
+  // Close headless browser so it doesn't hold the userDataDir lock
+  const existing = browsers.get(platform);
+  if (existing && existing.connected) {
+    await existing.close();
+    browsers.delete(platform);
+  }
+
+  const browser = await launchLoginBrowser(platform);
+  const pages = await browser.pages();
+  const page = pages[0] || await browser.newPage();
+  await page.goto(url, { waitUntil: "networkidle2", timeout: 30_000 });
+
+  logger.info({ platform }, "Résous le CAPTCHA puis ferme le navigateur");
+
+  // Wait for browser to be closed by user
+  await new Promise<void>((resolve) => {
+    browser.on("disconnected", () => {
+      browsers.delete(platform);
+      resolve();
+    });
+  });
+
+  logger.info({ platform }, "CAPTCHA solved, browser closed — resuming scrape");
 }
 
 export async function randomDelay(minMs = 500, maxMs = 2000): Promise<void> {

@@ -3,11 +3,13 @@ import type Database from "better-sqlite3";
 export interface Preference {
   id: number;
   name: string;
-  city: string;
+  leboncoin_location: string;
+  seloger_location: string;
   budget_min: number | null;
   budget_max: number | null;
   surface_min: number | null;
   rooms_min: number | null;
+  rooms_max: number | null;
   active: number;
   created_at: string;
   updated_at: string;
@@ -15,17 +17,19 @@ export interface Preference {
 
 export interface CreatePreferenceInput {
   name: string;
-  city: string;
+  leboncoin_location: string;
+  seloger_location: string;
   budget_min: number | null;
   budget_max: number | null;
   surface_min: number | null;
   rooms_min: number | null;
+  rooms_max: number | null;
 }
 
 export function createPreference(db: Database.Database, input: CreatePreferenceInput): Preference {
   const stmt = db.prepare(`
-    INSERT INTO preferences (name, city, budget_min, budget_max, surface_min, rooms_min)
-    VALUES (@name, @city, @budget_min, @budget_max, @surface_min, @rooms_min)
+    INSERT INTO preferences (name, leboncoin_location, seloger_location, budget_min, budget_max, surface_min, rooms_min, rooms_max)
+    VALUES (@name, @leboncoin_location, @seloger_location, @budget_min, @budget_max, @surface_min, @rooms_min, @rooms_max)
   `);
   const result = stmt.run(input);
   return db.prepare("SELECT * FROM preferences WHERE id = ?").get(result.lastInsertRowid) as Preference;

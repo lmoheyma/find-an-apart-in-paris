@@ -6,6 +6,7 @@ export default function Listings() {
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(0);
   const [platform, setPlatform] = useState<string>("");
+  const [sendStatus, setSendStatus] = useState("");
   const limit = 20;
 
   useEffect(() => { loadListings(); }, [page, platform]);
@@ -16,18 +17,36 @@ export default function Listings() {
     setTotal(result.total);
   }
 
+  async function handleSendRecent() {
+    setSendStatus("Scraping en cours (peut prendre quelques minutes)...");
+    try {
+      const result = await api.listings.sendRecent(15);
+      setSendStatus(`${result.scraped} nouvelles annonces scrapées, ${result.queued} messages en queue pour ${result.listings} annonces`);
+      loadListings(); // refresh list
+    } catch (e) {
+      setSendStatus(`Erreur: ${e}`);
+    }
+  }
+
   const totalPages = Math.ceil(total / limit);
 
   return (
     <div>
       <div className="flex justify-between items-center mb-4">
         <h1 className="text-2xl font-bold">Annonces ({total})</h1>
-        <select className="border p-2 rounded" value={platform} onChange={(e) => { setPlatform(e.target.value); setPage(0); }}>
-          <option value="">Toutes</option>
-          <option value="leboncoin">LeBonCoin</option>
-          <option value="seloger">SeLoger</option>
-        </select>
+        <div className="flex gap-2 items-center">
+          <button onClick={handleSendRecent} className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700">
+            Scraper + Envoyer (15 jours)
+          </button>
+          <select className="border p-2 rounded" value={platform} onChange={(e) => { setPlatform(e.target.value); setPage(0); }}>
+            <option value="">Toutes</option>
+            <option value="leboncoin">LeBonCoin</option>
+            <option value="seloger">SeLoger</option>
+          </select>
+        </div>
       </div>
+
+      {sendStatus && <div className="bg-blue-50 text-blue-700 p-3 rounded mb-4">{sendStatus}</div>}
 
       <div className="bg-white rounded shadow overflow-hidden">
         <table className="w-full text-sm">

@@ -10,8 +10,8 @@ export function createPreferencesRouter(db: Database.Database): Router {
   });
 
   router.post("/", (req, res) => {
-    const { name, city, budget_min, budget_max, surface_min, rooms_min } = req.body;
-    const pref = createPreference(db, { name, city, budget_min, budget_max, surface_min, rooms_min });
+    const { name, leboncoin_location, seloger_location, budget_min, budget_max, surface_min, rooms_min, rooms_max } = req.body;
+    const pref = createPreference(db, { name, leboncoin_location, seloger_location, budget_min, budget_max, surface_min, rooms_min, rooms_max });
     res.status(201).json(pref);
   });
 

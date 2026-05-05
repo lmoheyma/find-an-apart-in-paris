@@ -44,6 +44,12 @@ async function handleMessage(messageId: number): Promise<void> {
     url: listing.url,
   });
 
+  if (config.dryRun) {
+    logger.info({ messageId, platform: listing.platform, method: msg.method, title: listing.title, messageBody }, "[DRY RUN] Message would be sent");
+    updateMessageStatus(db, messageId, "sent");
+    return;
+  }
+
   try {
     if (msg.method === "platform_message") {
       if (listing.platform === "leboncoin") {
@@ -74,28 +80,20 @@ async function scrapeCycle(): Promise<void> {
 
   for (const pref of preferences) {
     try {
-      // Scrape both platforms
-      const [lbcListings, slListings] = await Promise.allSettled([
-        scrapeLeboncoin(pref),
-        scrapeSeloger(pref),
-      ]);
+      // Scrape platforms (only if location is configured)
+      const scrapePromises: Array<Promise<{ platform: string; listings: ScrapedListing[] }>> = [];
+      if (pref.leboncoin_location) scrapePromises.push(scrapeLeboncoin(pref).then(listings => ({ platform: "leboncoin", listings })));
+      if (pref.seloger_location) scrapePromises.push(scrapeSeloger(pref).then(listings => ({ platform: "seloger", listings })));
+      const results = await Promise.allSettled(scrapePromises);
 
       const allScraped: Array<{ platform: string; listing: ScrapedListing }> = [];
 
-      if (lbcListings.status === "fulfilled") {
-        for (const l of lbcListings.value) {
-          allScraped.push({ platform: "leboncoin", listing: l });
+      for (const result of results) {
+        if (result.status === "fulfilled") {
+          for (const l of result.value.listings) allScraped.push({ platform: result.value.platform, listing: l });
+        } else {
+          logger.error({ error: result.reason, pref: pref.name }, "Scrape failed");
         }
-      } else {
-        logger.error({ error: lbcListings.reason, pref: pref.name }, "LeBonCoin scrape failed");
-      }
-
-      if (slListings.status === "fulfilled") {
-        for (const l of slListings.value) {
-          allScraped.push({ platform: "seloger", listing: l });
-        }
-      } else {
-        logger.error({ error: slListings.reason, pref: pref.name }, "SeLoger scrape failed");
       }
 
       // Process new listings
@@ -152,6 +150,9 @@ process.on("SIGINT", shutdown);
 // Start
 const scheduler = new Scheduler(scrapeCycle, config.polling.intervalMs);
 
-startServer();
+startServer((id) => messageQueue.enqueue(id));
 scheduler.start();
-logger.info({ port: config.port, interval: config.polling.intervalMs }, "Apartment scraper started");
+if (config.dryRun) {
+  logger.info("*** DRY RUN MODE — scraping active, messages will NOT be sent ***");
+}
+logger.info({ port: config.port, interval: config.polling.intervalMs, dryRun: config.dryRun }, "Apartment scraper started");

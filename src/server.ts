@@ -10,7 +10,7 @@ import { createStatsRouter } from "./routes/stats.js";
 import { createHealthRouter } from "./routes/health.js";
 import { logger } from "./logger.js";
 
-export function startServer(): void {
+export function startServer(enqueueMessage?: (id: number) => void): void {
   const app = express();
   const db = getDb();
 
@@ -19,7 +19,7 @@ export function startServer(): void {
   // API routes
   app.use("/api/preferences", createPreferencesRouter(db));
   app.use("/api/templates", createTemplatesRouter(db));
-  app.use("/api/listings", createListingsRouter(db));
+  app.use("/api/listings", createListingsRouter(db, enqueueMessage));
   app.use("/api/sessions", createSessionsRouter(db));
   app.use("/api/stats", createStatsRouter(db));
   app.use("/health", createHealthRouter());
@@ -27,7 +27,7 @@ export function startServer(): void {
   // Serve frontend static files
   const frontendDist = path.join(process.cwd(), "frontend", "dist");
   app.use(express.static(frontendDist));
-  app.get("*", (_req, res) => {
+  app.get("*path", (_req, res) => {
     res.sendFile(path.join(frontendDist, "index.html"));
   });
 

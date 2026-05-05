@@ -1,22 +1,44 @@
 import type { Page } from "puppeteer";
 import type { ScrapedListing } from "./types.js";
 import type { Preference } from "../db/preferences.js";
-import { getPage, randomDelay } from "./browser.js";
+import { getPage, randomDelay, solveCaptchaManually } from "./browser.js";
 import { logger } from "../logger.js";
 
-export function buildSelogerUrl(pref: Preference): string {
+export function buildSelogerUrl(pref: Preference, pageNum = 1): string {
   const params = new URLSearchParams();
-  params.set("types", "1"); // location
-  params.set("places", `[{cp:${pref.city}}]`);
-  if (pref.budget_max) params.set("price", `${pref.budget_min || 0}/${pref.budget_max}`);
-  if (pref.surface_min) params.set("surface", `${pref.surface_min}/NaN`);
-  if (pref.rooms_min) params.set("rooms", `${pref.rooms_min}/NaN`);
-  params.set("sort", "d_dt_crea"); // most recent
-  return `https://www.seloger.com/list.htm?${params.toString()}`;
+  params.set("distributionTypes", "Rent");
+  params.set("estateTypes", "Apartment");
+  params.set("locations", pref.seloger_location);
+  if (pref.budget_min) params.set("priceMin", String(pref.budget_min));
+  if (pref.budget_max) params.set("priceMax", String(pref.budget_max));
+  if (pref.surface_min) params.set("surfaceMin", String(pref.surface_min));
+  if (pref.rooms_min) params.set("numberOfBedroomsMin", String(pref.rooms_min));
+  if (pref.rooms_max) params.set("numberOfBedroomsMax", String(pref.rooms_max));
+  params.set("projectTypes", "Stock");
+  params.set("order", "DateDesc");
+  if (pageNum > 1) params.set("page", String(pageNum));
+  return `https://www.seloger.com/classified-search?${params.toString()}`;
+}
+
+export async function scrapeSelogerDeep(pref: Preference, maxPages = 10): Promise<ScrapedListing[]> {
+  const allResults: ScrapedListing[] = [];
+  for (let p = 1; p <= maxPages; p++) {
+    logger.info({ page: p, maxPages, preference: pref.name }, "Scraping SeLoger page");
+    const results = await scrapeSelogerPage(pref, p);
+    if (results.length === 0) break;
+    allResults.push(...results);
+    await randomDelay(2000, 5000);
+  }
+  logger.info({ total: allResults.length, preference: pref.name }, "SeLoger deep scrape complete");
+  return allResults;
 }
 
 export async function scrapeSeloger(pref: Preference): Promise<ScrapedListing[]> {
-  const url = buildSelogerUrl(pref);
+  return scrapeSelogerPage(pref, 1);
+}
+
+async function scrapeSelogerPage(pref: Preference, pageNum: number): Promise<ScrapedListing[]> {
+  const url = buildSelogerUrl(pref, pageNum);
   logger.info({ url, preference: pref.name }, "Scraping SeLoger");
 
   let page: Page | null = null;
@@ -25,11 +47,21 @@ export async function scrapeSeloger(pref: Preference): Promise<ScrapedListing[]>
     await page.goto(url, { waitUntil: "networkidle2", timeout: 30_000 });
     await randomDelay(1000, 3000);
 
-    // Check for CAPTCHA / bot detection
+    // Check for CAPTCHA / bot detection / DataDome
+    const pageContent = await page.content();
     const blocked = await page.$("[class*='captcha'], [class*='challenge'], #sec-overlay");
-    if (blocked) {
-      logger.warn("Bot detection triggered on SeLoger");
-      throw new Error("CAPTCHA_DETECTED");
+    const isDataDome = pageContent.includes("Verification Required") || pageContent.includes("Slide right to secure");
+
+    if (blocked || isDataDome) {
+      logger.warn("CAPTCHA/DataDome detected on SeLoger");
+      await page.close();
+      page = null;
+      await solveCaptchaManually("seloger", url);
+
+      // Retry after manual solve
+      page = await getPage("seloger");
+      await page.goto(url, { waitUntil: "networkidle2", timeout: 30_000 });
+      await randomDelay(1000, 3000);
     }
 
     const listings = await page.evaluate(() => {
@@ -43,33 +75,50 @@ export async function scrapeSeloger(pref: Preference): Promise<ScrapedListing[]>
         city: string | null;
       }> = [];
 
-      const cards = document.querySelectorAll("[data-testid='sl.explore.card'], .CardContainer, article[class*='Classified']");
-      for (const card of cards) {
-        const link = card.querySelector("a[href*='/annonces/']") || card.closest("a");
-        if (!link) continue;
+      // Find all listing links (href contains /annonces/ and ends with .htm)
+      const links = document.querySelectorAll('a[href*="/annonces/"][href$=".htm"], a[href*="/annonces/"][href*=".htm?"]');
+      const seen = new Set<string>();
 
+      for (const link of links) {
         const href = link.getAttribute("href") || "";
-        const idMatch = href.match(/(\d+)\.htm/) || href.match(/annonces\/[^/]+\/(\d+)/);
+        // Extract ID from URL like .../264471207.htm
+        const idMatch = href.match(/\/(\d+)\.htm/);
         if (!idMatch) continue;
 
-        const titleEl = card.querySelector("[data-testid='sl.explore.card-title'], .card__title, [class*='Title']");
-        const priceEl = card.querySelector("[data-testid='sl.explore.card-price'], .card__price, [class*='Price']");
-        const surfaceEl = card.querySelector("[class*='Surface'], [class*='area']");
-        const roomsEl = card.querySelector("[class*='Rooms'], [class*='room']");
-        const cityEl = card.querySelector("[class*='City'], [class*='location']");
+        const externalId = idMatch[1];
+        if (seen.has(externalId)) continue;
+        seen.add(externalId);
 
-        const priceText = priceEl?.textContent?.replace(/[^\d]/g, "") || "";
-        const surfaceText = surfaceEl?.textContent?.replace(/[^\d]/g, "") || "";
-        const roomsText = roomsEl?.textContent?.replace(/[^\d]/g, "") || "";
+        // Clean URL (remove query params and hash)
+        const cleanUrl = href.split("?")[0].split("#")[0];
+        const fullUrl = cleanUrl.startsWith("http") ? cleanUrl : `https://www.seloger.com${cleanUrl}`;
+
+        // The card container is the closest parent div
+        const card = link.closest("div") as HTMLElement | null;
+        const cardText = card?.textContent || "";
+
+        // Extract price (number followed by €)
+        const priceMatch = cardText.match(/([\d\s.]+)\s*€/);
+        const priceText = priceMatch ? priceMatch[1].replace(/[\s.]/g, "") : "";
+
+        // Extract surface (number followed by m²)
+        const surfaceMatch = cardText.match(/(\d+)\s*m²/);
+
+        // Extract rooms/pièces
+        const roomsMatch = cardText.match(/(\d+)\s*(?:pièce|chambre)/i);
+
+        // Extract city from URL path (e.g., /paris-15eme-75/)
+        const cityMatch = href.match(/\/annonces\/[^/]+\/[^/]+\/([^/]+)\//);
+        const cityFromUrl = cityMatch ? cityMatch[1].replace(/-/g, " ") : null;
 
         items.push({
-          external_id: idMatch[1],
-          url: href.startsWith("http") ? href : `https://www.seloger.com${href}`,
-          title: titleEl?.textContent?.trim() || "",
+          external_id: externalId,
+          url: fullUrl,
+          title: cardText.substring(0, 100).trim(),
           price: priceText ? parseInt(priceText, 10) : null,
-          surface: surfaceText ? parseInt(surfaceText, 10) : null,
-          rooms: roomsText ? parseInt(roomsText, 10) : null,
-          city: cityEl?.textContent?.trim() || null,
+          surface: surfaceMatch ? parseInt(surfaceMatch[1], 10) : null,
+          rooms: roomsMatch ? parseInt(roomsMatch[1], 10) : null,
+          city: cityFromUrl,
         });
       }
       return items;

@@ -1,23 +1,40 @@
 import type { Page } from "puppeteer";
 import type { ScrapedListing } from "./types.js";
 import type { Preference } from "../db/preferences.js";
-import { getPage, randomDelay } from "./browser.js";
+import { getPage, randomDelay, solveCaptchaManually } from "./browser.js";
 import { logger } from "../logger.js";
 
-export function buildLeboncoinUrl(pref: Preference): string {
+export function buildLeboncoinUrl(pref: Preference, pageNum = 1): string {
   const params = new URLSearchParams();
   params.set("category", "10"); // locations
-  params.set("locations", pref.city);
-  if (pref.budget_min) params.set("price", `${pref.budget_min}-${pref.budget_max || ""}`);
-  if (pref.budget_max && !pref.budget_min) params.set("price", `-${pref.budget_max}`);
+  params.set("locations", pref.leboncoin_location);
+  if (pref.budget_min || pref.budget_max) params.set("price", `${pref.budget_min || "min"}-${pref.budget_max || "max"}`);
   if (pref.surface_min) params.set("square", `${pref.surface_min}-`);
-  if (pref.rooms_min) params.set("rooms", `${pref.rooms_min}-`);
+  if (pref.rooms_min || pref.rooms_max) params.set("bedrooms", `${pref.rooms_min || ""}-${pref.rooms_max || ""}`);
   params.set("sort", "time"); // most recent first
+  if (pageNum > 1) params.set("page", String(pageNum));
   return `https://www.leboncoin.fr/recherche?${params.toString()}`;
 }
 
+export async function scrapeLeboncoinDeep(pref: Preference, maxPages = 10): Promise<ScrapedListing[]> {
+  const allResults: ScrapedListing[] = [];
+  for (let p = 1; p <= maxPages; p++) {
+    logger.info({ page: p, maxPages, preference: pref.name }, "Scraping LeBonCoin page");
+    const results = await scrapeLeboncoinPage(pref, p);
+    if (results.length === 0) break;
+    allResults.push(...results);
+    await randomDelay(2000, 5000);
+  }
+  logger.info({ total: allResults.length, preference: pref.name }, "LeBonCoin deep scrape complete");
+  return allResults;
+}
+
 export async function scrapeLeboncoin(pref: Preference): Promise<ScrapedListing[]> {
-  const url = buildLeboncoinUrl(pref);
+  return scrapeLeboncoinPage(pref, 1);
+}
+
+async function scrapeLeboncoinPage(pref: Preference, pageNum: number): Promise<ScrapedListing[]> {
+  const url = buildLeboncoinUrl(pref, pageNum);
   logger.info({ url, preference: pref.name }, "Scraping LeBonCoin");
 
   let page: Page | null = null;
@@ -26,11 +43,21 @@ export async function scrapeLeboncoin(pref: Preference): Promise<ScrapedListing[
     await page.goto(url, { waitUntil: "networkidle2", timeout: 30_000 });
     await randomDelay(1000, 3000);
 
-    // Check for CAPTCHA
-    const captcha = await page.$("[class*='captcha'], [id*='captcha']");
-    if (captcha) {
-      logger.warn("CAPTCHA detected on LeBonCoin");
-      throw new Error("CAPTCHA_DETECTED");
+    // Check for CAPTCHA / DataDome verification
+    const pageContent = await page.content();
+    const isCaptcha = await page.$("[class*='captcha'], [id*='captcha']");
+    const isDataDome = pageContent.includes("Verification Required") || pageContent.includes("Slide right to secure");
+
+    if (isCaptcha || isDataDome || pageContent.length < 50000) {
+      logger.warn("CAPTCHA/DataDome detected on LeBonCoin");
+      await page.close();
+      page = null;
+      await solveCaptchaManually("leboncoin", url);
+
+      // Retry after manual solve
+      page = await getPage("leboncoin");
+      await page.goto(url, { waitUntil: "networkidle2", timeout: 30_000 });
+      await randomDelay(2000, 4000);
     }
 
     // Extract listings from search results
@@ -43,27 +70,36 @@ export async function scrapeLeboncoin(pref: Preference): Promise<ScrapedListing[
         city: string | null;
       }> = [];
 
-      const cards = document.querySelectorAll("[data-qa-id='aditem_container'], a[data-test-id='ad']");
+      // Find ad cards by their class pattern
+      const cards = document.querySelectorAll("li[class*='adCard']");
       for (const card of cards) {
-        const link = card.closest("a") || card.querySelector("a");
+        // Find the listing link (href like /ad/locations/12345)
+        const link = card.querySelector("a[href*='/ad/']") as HTMLAnchorElement | null;
         if (!link) continue;
 
         const href = link.getAttribute("href") || "";
-        const idMatch = href.match(/(\d+)\.htm/);
+        const idMatch = href.match(/\/ad\/[^/]+\/(\d+)/);
         if (!idMatch) continue;
 
-        const titleEl = card.querySelector("[data-qa-id='aditem_title'], [data-test-id='ad-title']");
-        const priceEl = card.querySelector("[data-qa-id='aditem_price'], [data-test-id='ad-price']");
-        const cityEl = card.querySelector("[data-qa-id='aditem_location'], [aria-label*='Localisation']");
+        // Title is in the aria-label or span title of the link
+        const titleSpan = link.querySelector("span[title]");
+        const titleText = titleSpan?.getAttribute("title")?.replace(/^Voir l'annonce:\s*/, "") || link.getAttribute("aria-label") || "";
 
-        const priceText = priceEl?.textContent?.replace(/[^\d]/g, "") || "";
+        // Price: look for text containing €
+        const allText = card.textContent || "";
+        const priceMatch = allText.match(/([\d\s]+)\s*€/);
+        const priceText = priceMatch ? priceMatch[1].replace(/\s/g, "") : "";
+
+        // City: typically after the price area
+        const locationEl = card.querySelector("p[class*='location'], span[class*='location'], [class*='Location']");
+        const cityText = locationEl?.textContent?.trim() || null;
 
         items.push({
           external_id: idMatch[1],
-          url: href.startsWith("http") ? href : `https://www.leboncoin.fr${href}`,
-          title: titleEl?.textContent?.trim() || "",
+          url: `https://www.leboncoin.fr${href}`,
+          title: titleText,
           price: priceText ? parseInt(priceText, 10) : null,
-          city: cityEl?.textContent?.trim() || null,
+          city: cityText,
         });
       }
       return items;

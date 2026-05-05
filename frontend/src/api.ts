@@ -13,11 +13,13 @@ async function fetchJson<T>(url: string, options?: RequestInit): Promise<T> {
 export interface Preference {
   id: number;
   name: string;
-  city: string;
+  leboncoin_location: string;
+  seloger_location: string;
   budget_min: number | null;
   budget_max: number | null;
   surface_min: number | null;
   rooms_min: number | null;
+  rooms_max: number | null;
   active: number;
 }
 
@@ -79,6 +81,7 @@ export const api = {
       if (params.platform) qs.set("platform", params.platform);
       return fetchJson<{ listings: Listing[]; total: number }>(`/listings?${qs}`);
     },
+    sendRecent: (days = 15) => fetchJson<{ scraped: number; queued: number; listings: number }>("/listings/send-recent", { method: "POST", body: JSON.stringify({ days }) }),
   },
   stats: () => fetchJson<Stats>("/stats"),
   sessions: {

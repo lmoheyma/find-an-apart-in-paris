@@ -33,11 +33,13 @@ export function runMigrations(db: Database.Database): void {
     CREATE TABLE IF NOT EXISTS preferences (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL,
-      city TEXT NOT NULL,
+      leboncoin_location TEXT NOT NULL DEFAULT '',
+      seloger_location TEXT NOT NULL DEFAULT '',
       budget_min INTEGER,
       budget_max INTEGER,
       surface_min INTEGER,
       rooms_min INTEGER,
+      rooms_max INTEGER,
       active INTEGER NOT NULL DEFAULT 1,
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
