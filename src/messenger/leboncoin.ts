@@ -1,11 +1,15 @@
 import type { Listing } from "../db/listings.js";
-import { getPage, randomDelay, solveCaptchaManually } from "../scraper/browser.js";
+import { getPage, randomDelay, reportCaptcha, withPlatformLock } from "../scraper/browser.js";
 import { logger } from "../logger.js";
 
 export async function sendLeboncoinMessage(listing: Listing, message: string): Promise<void> {
+  return withPlatformLock("leboncoin", () => sendLeboncoinMessageInner(listing, message));
+}
+
+async function sendLeboncoinMessageInner(listing: Listing, message: string): Promise<void> {
   logger.info({ listingId: listing.id, url: listing.url }, "Sending LeBonCoin message");
 
-  let page = await getPage("leboncoin");
+  const page = await getPage("leboncoin");
   try {
     await page.goto(listing.url, { waitUntil: "networkidle2", timeout: 30_000 });
     await randomDelay(1500, 3000);
@@ -13,11 +17,8 @@ export async function sendLeboncoinMessage(listing: Listing, message: string): P
     // Check for CAPTCHA
     const content = await page.content();
     if (content.includes("Verification Required") || content.includes("Slide right to secure") || content.length < 50000) {
-      await page.close();
-      await solveCaptchaManually("leboncoin", listing.url);
-      page = await getPage("leboncoin");
-      await page.goto(listing.url, { waitUntil: "networkidle2", timeout: 30_000 });
-      await randomDelay(1500, 3000);
+      await page.close().catch(() => undefined);
+      await reportCaptcha("leboncoin");
     }
 
     // Click "Envoyer un message" by text

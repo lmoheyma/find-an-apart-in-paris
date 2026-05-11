@@ -1,11 +1,15 @@
 import type { Listing } from "../db/listings.js";
-import { getPage, randomDelay, solveCaptchaManually } from "../scraper/browser.js";
+import { getPage, randomDelay, reportCaptcha, withPlatformLock } from "../scraper/browser.js";
 import { logger } from "../logger.js";
 
 export async function sendSelogerMessage(listing: Listing, message: string): Promise<void> {
+  return withPlatformLock("seloger", () => sendSelogerMessageInner(listing, message));
+}
+
+async function sendSelogerMessageInner(listing: Listing, message: string): Promise<void> {
   logger.info({ listingId: listing.id, url: listing.url }, "Sending SeLoger message");
 
-  let page = await getPage("seloger");
+  const page = await getPage("seloger");
   try {
     await page.goto(listing.url, { waitUntil: "networkidle2", timeout: 30_000 });
     await randomDelay(1500, 3000);
@@ -13,11 +17,8 @@ export async function sendSelogerMessage(listing: Listing, message: string): Pro
     // Check for CAPTCHA / DataDome
     const content = await page.content();
     if (content.length < 100000) {
-      await page.close();
-      await solveCaptchaManually("seloger", listing.url);
-      page = await getPage("seloger");
-      await page.goto(listing.url, { waitUntil: "networkidle2", timeout: 30_000 });
-      await randomDelay(1500, 3000);
+      await page.close().catch(() => undefined);
+      await reportCaptcha("seloger");
     }
 
     // Click contact button by text

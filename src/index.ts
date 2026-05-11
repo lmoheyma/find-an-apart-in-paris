@@ -7,7 +7,9 @@ import { createMessage, updateMessageStatus } from "./db/messages.js";
 import { getDefaultTemplate } from "./db/templates.js";
 import { scrapeLeboncoin } from "./scraper/leboncoin.js";
 import { scrapeSeloger } from "./scraper/seloger.js";
-import { closeAllBrowsers } from "./scraper/browser.js";
+import { closeAllBrowsers, CaptchaError } from "./scraper/browser.js";
+import { updateSessionStatus, upsertSession } from "./db/sessions.js";
+import path from "node:path";
 import { sendLeboncoinMessage } from "./messenger/leboncoin.js";
 import { sendSelogerMessage } from "./messenger/seloger.js";
 import { sendEmail } from "./messenger/email.js";
@@ -63,9 +65,21 @@ async function handleMessage(messageId: number): Promise<void> {
     updateMessageStatus(db, messageId, "sent");
   } catch (error) {
     const errMsg = error instanceof Error ? error.message : String(error);
+    // CAPTCHA: keep message pending so it retries when session is restored
+    if (error instanceof CaptchaError) {
+      flagSessionCaptcha(error.platform);
+      logger.warn({ messageId, platform: error.platform }, "Message send skipped — CAPTCHA required");
+      return; // message stays pending
+    }
     logger.error({ messageId, error: errMsg }, "Message send failed");
     updateMessageStatus(db, messageId, "failed", errMsg);
   }
+}
+
+function flagSessionCaptcha(platform: string): void {
+  const userDataDir = path.join(config.browserDataDir, platform);
+  upsertSession(db, platform, userDataDir);
+  updateSessionStatus(db, platform, "captcha_required");
 }
 
 const messageQueue = new MessageQueue(config.messaging, handleMessage);
@@ -102,7 +116,14 @@ async function scrapeCycle(): Promise<void> {
         if (result.status === "fulfilled") {
           for (const l of result.value.listings) allScraped.push({ platform: result.value.platform, listing: l });
         } else {
-          logger.error({ error: result.reason, pref: pref.name }, "Scrape failed");
+          const reason = result.reason;
+          if (reason instanceof CaptchaError) {
+            flagSessionCaptcha(reason.platform);
+            logger.warn({ platform: reason.platform, pref: pref.name }, "Scrape skipped — CAPTCHA required");
+          } else {
+            const errMsg = reason instanceof Error ? reason.message : String(reason);
+            logger.error({ error: errMsg, pref: pref.name }, "Scrape failed");
+          }
         }
       }
 

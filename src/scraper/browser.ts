@@ -10,6 +10,31 @@ puppeteer.use(StealthPlugin());
 
 const browsers: Map<string, Browser> = new Map();
 
+// Per-platform serialization. All scraper, messenger, and login operations
+// MUST run inside withPlatformLock to prevent userDataDir contention.
+const platformLocks: Map<string, Promise<unknown>> = new Map();
+
+export async function withPlatformLock<T>(platform: string, fn: () => Promise<T>): Promise<T> {
+  const prev = platformLocks.get(platform) || Promise.resolve();
+  const next = prev.catch(() => undefined).then(fn);
+  platformLocks.set(platform, next);
+  try {
+    return await next;
+  } finally {
+    // Only clear if no further work was queued behind us
+    if (platformLocks.get(platform) === next) {
+      platformLocks.delete(platform);
+    }
+  }
+}
+
+export class CaptchaError extends Error {
+  constructor(public platform: string) {
+    super(`CAPTCHA detected on ${platform} — manual login required`);
+    this.name = "CaptchaError";
+  }
+}
+
 function getUserDataDir(platform: string): string {
   const dir = path.join(config.browserDataDir, platform);
   fs.mkdirSync(dir, { recursive: true });
@@ -132,32 +157,19 @@ export async function closeAllBrowsers(): Promise<void> {
   browsers.clear();
 }
 
-export async function solveCaptchaManually(platform: string, url: string): Promise<void> {
-  logger.warn({ platform, url }, "CAPTCHA detected — opening visible browser for manual solve");
+// Throws CaptchaError. Caller is responsible for closing pages and marking
+// the platform's session as captcha_required in the DB so the user can act.
+export async function reportCaptcha(platform: string): Promise<never> {
+  logger.warn({ platform }, "CAPTCHA detected — marking session as captcha_required");
 
-  // Close headless browser so it doesn't hold the userDataDir lock
+  // Close the browser so the userDataDir lock is released for the user to log back in via the dashboard
   const existing = browsers.get(platform);
   if (existing && existing.connected) {
-    await existing.close();
-    browsers.delete(platform);
+    await existing.close().catch(() => undefined);
   }
+  browsers.delete(platform);
 
-  const browser = await launchLoginBrowser(platform);
-  const pages = await browser.pages();
-  const page = pages[0] || await browser.newPage();
-  await page.goto(url, { waitUntil: "networkidle2", timeout: 30_000 });
-
-  logger.info({ platform }, "Résous le CAPTCHA puis ferme le navigateur");
-
-  // Wait for browser to be closed by user
-  await new Promise<void>((resolve) => {
-    browser.on("disconnected", () => {
-      browsers.delete(platform);
-      resolve();
-    });
-  });
-
-  logger.info({ platform }, "CAPTCHA solved, browser closed — resuming scrape");
+  throw new CaptchaError(platform);
 }
 
 export async function randomDelay(minMs = 500, maxMs = 2000): Promise<void> {

@@ -1,7 +1,7 @@
 import type { Page } from "puppeteer";
 import type { ScrapedListing } from "./types.js";
 import type { Preference } from "../db/preferences.js";
-import { getPage, randomDelay, solveCaptchaManually } from "./browser.js";
+import { getPage, randomDelay, reportCaptcha, withPlatformLock } from "./browser.js";
 import { logger } from "../logger.js";
 
 export function buildSelogerUrl(pref: Preference, pageNum = 1): string {
@@ -38,6 +38,10 @@ export async function scrapeSeloger(pref: Preference): Promise<ScrapedListing[]>
 }
 
 async function scrapeSelogerPage(pref: Preference, pageNum: number): Promise<ScrapedListing[]> {
+  return withPlatformLock("seloger", () => scrapeSelogerPageInner(pref, pageNum));
+}
+
+async function scrapeSelogerPageInner(pref: Preference, pageNum: number): Promise<ScrapedListing[]> {
   const url = buildSelogerUrl(pref, pageNum);
   logger.info({ url, preference: pref.name }, "Scraping SeLoger");
 
@@ -52,16 +56,8 @@ async function scrapeSelogerPage(pref: Preference, pageNum: number): Promise<Scr
     const blocked = await page.$("[class*='captcha'], [class*='challenge'], #sec-overlay");
     const isDataDome = pageContent.includes("Verification Required") || pageContent.includes("Slide right to secure");
 
-    if (blocked || isDataDome) {
-      logger.warn("CAPTCHA/DataDome detected on SeLoger");
-      await page.close();
-      page = null;
-      await solveCaptchaManually("seloger", url);
-
-      // Retry after manual solve
-      page = await getPage("seloger");
-      await page.goto(url, { waitUntil: "networkidle2", timeout: 30_000 });
-      await randomDelay(1000, 3000);
+    if (blocked || isDataDome || pageContent.length < 50000) {
+      await reportCaptcha("seloger");
     }
 
     const listings = await page.evaluate(() => {

@@ -32,14 +32,19 @@ export default function Sessions() {
       <div className="space-y-4">
         {platforms.map((platform) => {
           const session = sessions.find((s) => s.platform === platform);
-          const statusColor = session?.status === "valid" ? "green" : session?.status === "expired" ? "red" : "gray";
+          const status = session?.status || "non configure";
+          const statusClass =
+            status === "valid" ? "bg-green-100 text-green-700"
+            : status === "captcha_required" ? "bg-orange-100 text-orange-700"
+            : status === "expired" ? "bg-red-100 text-red-700"
+            : "bg-gray-100 text-gray-700";
 
           return (
             <div key={platform} className="bg-white p-4 rounded shadow flex items-center justify-between">
               <div>
                 <span className="font-semibold capitalize">{platform}</span>
-                <span className={`ml-3 px-2 py-0.5 rounded text-xs bg-${statusColor}-100 text-${statusColor}-700`}>
-                  {session?.status || "non configure"}
+                <span className={`ml-3 px-2 py-0.5 rounded text-xs ${statusClass}`}>
+                  {status === "captcha_required" ? "CAPTCHA à résoudre" : status}
                 </span>
                 {session?.last_valid_at && (
                   <span className="ml-2 text-sm text-gray-500">

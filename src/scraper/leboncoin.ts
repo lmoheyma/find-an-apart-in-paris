@@ -1,7 +1,7 @@
 import type { Page } from "puppeteer";
 import type { ScrapedListing } from "./types.js";
 import type { Preference } from "../db/preferences.js";
-import { getPage, randomDelay, solveCaptchaManually } from "./browser.js";
+import { getPage, randomDelay, reportCaptcha, withPlatformLock } from "./browser.js";
 import { logger } from "../logger.js";
 
 export function buildLeboncoinUrl(pref: Preference, pageNum = 1): string {
@@ -34,6 +34,10 @@ export async function scrapeLeboncoin(pref: Preference): Promise<ScrapedListing[
 }
 
 async function scrapeLeboncoinPage(pref: Preference, pageNum: number): Promise<ScrapedListing[]> {
+  return withPlatformLock("leboncoin", () => scrapeLeboncoinPageInner(pref, pageNum));
+}
+
+async function scrapeLeboncoinPageInner(pref: Preference, pageNum: number): Promise<ScrapedListing[]> {
   const url = buildLeboncoinUrl(pref, pageNum);
   logger.info({ url, preference: pref.name }, "Scraping LeBonCoin");
 
@@ -49,15 +53,8 @@ async function scrapeLeboncoinPage(pref: Preference, pageNum: number): Promise<S
     const isDataDome = pageContent.includes("Verification Required") || pageContent.includes("Slide right to secure");
 
     if (isCaptcha || isDataDome || pageContent.length < 50000) {
-      logger.warn("CAPTCHA/DataDome detected on LeBonCoin");
-      await page.close();
-      page = null;
-      await solveCaptchaManually("leboncoin", url);
-
-      // Retry after manual solve
-      page = await getPage("leboncoin");
-      await page.goto(url, { waitUntil: "networkidle2", timeout: 30_000 });
-      await randomDelay(2000, 4000);
+      // reportCaptcha throws — finally block will close the page
+      await reportCaptcha("leboncoin");
     }
 
     // Extract listings from search results

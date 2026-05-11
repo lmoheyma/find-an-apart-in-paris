@@ -6,6 +6,9 @@ export interface QueueConfig {
 
 export class MessageQueue {
   private queue: number[] = [];
+  // IDs currently queued or being processed. Used to dedupe re-enqueues
+  // (e.g. reEnqueuePending after each scrape cycle).
+  private known: Set<number> = new Set();
   private processing = false;
   private sentThisHour = 0;
   private hourStart = Date.now();
@@ -18,6 +21,8 @@ export class MessageQueue {
   ) {}
 
   enqueue(messageId: number): void {
+    if (this.known.has(messageId)) return;
+    this.known.add(messageId);
     this.queue.push(messageId);
     if (!this.processing) {
       this.processing = true;
@@ -63,7 +68,11 @@ export class MessageQueue {
     }
 
     const messageId = this.queue.shift()!;
-    await this.handler(messageId);
+    try {
+      await this.handler(messageId);
+    } finally {
+      this.known.delete(messageId);
+    }
     this.sentThisHour++;
 
     if (this.queue.length > 0 && !this.stopped) {
