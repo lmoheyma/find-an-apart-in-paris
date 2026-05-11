@@ -51,9 +51,14 @@ export class MessageQueue {
       this.hourStart = Date.now();
     }
 
-    // Rate limit check
+    // Rate limit check — wait until next hour window
     if (this.sentThisHour >= this.config.maxPerHour) {
-      this.processing = false;
+      const waitMs = 3_600_000 - (Date.now() - this.hourStart) + 1000;
+      this.timer = setTimeout(() => {
+        this.sentThisHour = 0;
+        this.hourStart = Date.now();
+        this.processNext();
+      }, waitMs);
       return;
     }
 

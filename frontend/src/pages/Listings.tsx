@@ -57,6 +57,7 @@ export default function Listings() {
               <th className="p-3 text-left">Surface</th>
               <th className="p-3 text-left">Ville</th>
               <th className="p-3 text-left">Plateforme</th>
+              <th className="p-3 text-left">Message</th>
               <th className="p-3 text-left">Date</th>
               <th className="p-3 text-left">Lien</th>
             </tr>
@@ -69,6 +70,12 @@ export default function Listings() {
                 <td className="p-3">{l.surface ? `${l.surface}m2` : "—"}</td>
                 <td className="p-3">{l.city || "—"}</td>
                 <td className="p-3"><span className={`px-2 py-0.5 rounded text-xs ${l.platform === "leboncoin" ? "bg-orange-100 text-orange-700" : "bg-purple-100 text-purple-700"}`}>{l.platform}</span></td>
+                <td className="p-3">
+                  {l.message_status === "sent" && <span className="px-2 py-0.5 rounded text-xs bg-green-100 text-green-700">Envoyé</span>}
+                  {l.message_status === "pending" && <span className="px-2 py-0.5 rounded text-xs bg-yellow-100 text-yellow-700">En attente</span>}
+                  {l.message_status === "failed" && <span className="px-2 py-0.5 rounded text-xs bg-red-100 text-red-700">Erreur</span>}
+                  {!l.message_status && <span className="px-2 py-0.5 rounded text-xs bg-gray-100 text-gray-500">—</span>}
+                </td>
                 <td className="p-3 text-gray-500">{new Date(l.discovered_at).toLocaleDateString("fr")}</td>
                 <td className="p-3"><a href={l.url} target="_blank" rel="noreferrer" className="text-blue-600 hover:underline">Voir</a></td>
               </tr>

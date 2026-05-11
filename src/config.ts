@@ -14,8 +14,8 @@ export const config = {
   },
   messaging: {
     maxPerHour: Number(process.env.MAX_MESSAGES_PER_HOUR) || 5,
-    delayMinMs: 60_000,  // 1 min
-    delayMaxMs: 180_000, // 3 min
+    delayMinMs: 10_000,  // 10 sec
+    delayMaxMs: 30_000,  // 30 sec
   },
   smtp: {
     host: process.env.SMTP_HOST || "",

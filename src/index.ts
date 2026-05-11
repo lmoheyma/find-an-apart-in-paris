@@ -70,6 +70,16 @@ async function handleMessage(messageId: number): Promise<void> {
 
 const messageQueue = new MessageQueue(config.messaging, handleMessage);
 
+function reEnqueuePending(): void {
+  const pendingMessages = db.prepare("SELECT id FROM messages_sent WHERE status = 'pending' ORDER BY id ASC").all() as Array<{ id: number }>;
+  if (pendingMessages.length > 0) {
+    logger.info({ count: pendingMessages.length }, "Re-enqueuing pending messages from DB");
+    for (const msg of pendingMessages) {
+      messageQueue.enqueue(msg.id);
+    }
+  }
+}
+
 // Main scrape cycle
 async function scrapeCycle(): Promise<void> {
   const preferences = getActivePreferences(db);
@@ -130,6 +140,9 @@ async function scrapeCycle(): Promise<void> {
       logger.error({ error, pref: pref.name }, "Scrape cycle error for preference");
     }
   }
+
+  // After scraping, re-enqueue any pending messages (including from previous runs)
+  reEnqueuePending();
 }
 
 // Graceful shutdown

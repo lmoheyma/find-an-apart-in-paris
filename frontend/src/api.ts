@@ -41,6 +41,7 @@ export interface Listing {
   rooms: number | null;
   city: string | null;
   discovered_at: string;
+  message_status: string | null;
 }
 
 export interface Stats {
