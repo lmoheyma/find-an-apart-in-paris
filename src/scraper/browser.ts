@@ -99,6 +99,15 @@ export async function getPage(platform: string): Promise<Page> {
   return page;
 }
 
+export async function closeBrowser(platform: string): Promise<void> {
+  const existing = browsers.get(platform);
+  if (existing && existing.connected) {
+    logger.info({ platform }, "Closing browser");
+    await existing.close();
+    browsers.delete(platform);
+  }
+}
+
 export async function closeAllBrowsers(): Promise<void> {
   for (const [platform, browser] of browsers) {
     logger.info({ platform }, "Closing browser");

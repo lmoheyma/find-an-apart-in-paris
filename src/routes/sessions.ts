@@ -1,7 +1,7 @@
 import { Router } from "express";
 import type Database from "better-sqlite3";
 import { getSessions, updateSessionStatus, upsertSession } from "../db/sessions.js";
-import { launchLoginBrowser } from "../scraper/browser.js";
+import { launchLoginBrowser, closeBrowser } from "../scraper/browser.js";
 import { config } from "../config.js";
 import path from "node:path";
 import { logger } from "../logger.js";
@@ -21,6 +21,8 @@ export function createSessionsRouter(db: Database.Database): Router {
   router.post("/:platform/login", async (req, res) => {
     const platform = req.params.platform;
     try {
+      // Close existing headless browser holding the userDataDir lock
+      await closeBrowser(platform);
       const browser = await launchLoginBrowser(platform);
       const pages = await browser.pages();
       const page = pages[0] || await browser.newPage();
