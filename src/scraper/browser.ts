@@ -52,8 +52,8 @@ export async function getBrowser(platform: string): Promise<Browser> {
   const userDataDir = getUserDataDir(platform);
   logger.info({ platform, userDataDir, chromePath: chromePath || "bundled" }, "Launching browser");
 
-  const launchOptions: Parameters<typeof puppeteer.launch>[0] = {
-    headless: "new",
+  const launchOptions: NonNullable<Parameters<typeof puppeteer.launch>[0]> = {
+    headless: true,
     userDataDir,
     args: [
       "--no-sandbox",
@@ -77,7 +77,7 @@ export async function launchLoginBrowser(platform: string): Promise<Browser> {
   const userDataDir = getUserDataDir(platform);
   logger.info({ platform }, "Launching visible browser for login");
 
-  const launchOptions: Parameters<typeof puppeteer.launch>[0] = {
+  const launchOptions: NonNullable<Parameters<typeof puppeteer.launch>[0]> = {
     headless: false,
     userDataDir,
     args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage", "--window-size=1920,1080", "--disable-blink-features=AutomationControlled"],
