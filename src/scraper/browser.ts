@@ -16,6 +16,20 @@ function getUserDataDir(platform: string): string {
   return dir;
 }
 
+function clearStaleChromeLocks(userDataDir: string): void {
+  for (const lockFile of ["SingletonLock", "SingletonCookie", "SingletonSocket"]) {
+    const lockPath = path.join(userDataDir, lockFile);
+    try {
+      if (fs.existsSync(lockPath) || fs.lstatSync(lockPath, { throwIfNoEntry: false })) {
+        fs.unlinkSync(lockPath);
+        logger.info({ lockPath }, "Removed stale Chrome lock");
+      }
+    } catch {
+      // ignore — file doesn't exist or already removed
+    }
+  }
+}
+
 function getChromePath(): string {
   // Use CHROME_PATH env var if set, otherwise detect common locations
   if (process.env.CHROME_PATH) return process.env.CHROME_PATH;
@@ -50,6 +64,7 @@ export async function getBrowser(platform: string): Promise<Browser> {
   }
 
   const userDataDir = getUserDataDir(platform);
+  clearStaleChromeLocks(userDataDir);
   logger.info({ platform, userDataDir, chromePath: chromePath || "bundled" }, "Launching browser");
 
   const launchOptions: NonNullable<Parameters<typeof puppeteer.launch>[0]> = {
@@ -75,6 +90,7 @@ export async function getBrowser(platform: string): Promise<Browser> {
 
 export async function launchLoginBrowser(platform: string): Promise<Browser> {
   const userDataDir = getUserDataDir(platform);
+  clearStaleChromeLocks(userDataDir);
   logger.info({ platform }, "Launching visible browser for login");
 
   const launchOptions: NonNullable<Parameters<typeof puppeteer.launch>[0]> = {
