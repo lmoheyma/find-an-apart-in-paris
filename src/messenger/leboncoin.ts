@@ -1,5 +1,5 @@
 import type { Listing } from "../db/listings.js";
-import { getPage, randomDelay, reportCaptcha, withPlatformLock } from "../scraper/browser.js";
+import { getPage, randomDelay, reportCaptcha, withPlatformLock, SessionExpiredError } from "../scraper/browser.js";
 import { logger } from "../logger.js";
 
 export async function sendLeboncoinMessage(listing: Listing, message: string): Promise<void> {
@@ -32,12 +32,12 @@ async function sendLeboncoinMessageInner(listing: Listing, message: string): Pro
       }
       return false;
     });
-    if (!clicked) throw new Error("Contact button not found on listing page");
+    if (!clicked) throw new SessionExpiredError("leboncoin", "Contact button not found — likely logged out");
     await randomDelay(2000, 3000);
 
     // Wait for message textarea
     const textarea = await page.waitForSelector("textarea", { timeout: 10_000 });
-    if (!textarea) throw new Error("Message textarea not found");
+    if (!textarea) throw new SessionExpiredError("leboncoin", "Message textarea not found");
 
     // Set message content using React-compatible method
     await textarea.click();

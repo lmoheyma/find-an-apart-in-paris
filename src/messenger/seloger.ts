@@ -1,5 +1,5 @@
 import type { Listing } from "../db/listings.js";
-import { getPage, randomDelay, reportCaptcha, withPlatformLock } from "../scraper/browser.js";
+import { getPage, randomDelay, reportCaptcha, withPlatformLock, SessionExpiredError } from "../scraper/browser.js";
 import { logger } from "../logger.js";
 
 export async function sendSelogerMessage(listing: Listing, message: string): Promise<void> {
@@ -33,12 +33,12 @@ async function sendSelogerMessageInner(listing: Listing, message: string): Promi
       }
       return false;
     });
-    if (!clicked) throw new Error("Contact button not found on SeLoger listing");
+    if (!clicked) throw new SessionExpiredError("seloger", "Contact button not found — likely logged out");
     await randomDelay(2000, 3000);
 
     // Wait for textarea
     const textarea = await page.waitForSelector("textarea", { timeout: 10_000 });
-    if (!textarea) throw new Error("Message textarea not found on SeLoger");
+    if (!textarea) throw new SessionExpiredError("seloger", "Message textarea not found");
 
     // Set message content using React-compatible method
     await textarea.click();

@@ -35,6 +35,13 @@ export class CaptchaError extends Error {
   }
 }
 
+export class SessionExpiredError extends Error {
+  constructor(public platform: string, reason: string) {
+    super(`Session likely expired on ${platform}: ${reason}`);
+    this.name = "SessionExpiredError";
+  }
+}
+
 function getUserDataDir(platform: string): string {
   const dir = path.join(config.browserDataDir, platform);
   fs.mkdirSync(dir, { recursive: true });

@@ -66,4 +66,10 @@ export function runMigrations(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_messages_status ON messages_sent(status);
     CREATE INDEX IF NOT EXISTS idx_messages_listing ON messages_sent(listing_id);
   `);
+
+  // Idempotent column additions for existing databases
+  const messageColumns = db.prepare("PRAGMA table_info(messages_sent)").all() as Array<{ name: string }>;
+  if (!messageColumns.some((c) => c.name === "retry_count")) {
+    db.exec("ALTER TABLE messages_sent ADD COLUMN retry_count INTEGER NOT NULL DEFAULT 0");
+  }
 }

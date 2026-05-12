@@ -7,7 +7,7 @@ import { createMessage, updateMessageStatus } from "./db/messages.js";
 import { getDefaultTemplate } from "./db/templates.js";
 import { scrapeLeboncoin } from "./scraper/leboncoin.js";
 import { scrapeSeloger } from "./scraper/seloger.js";
-import { closeAllBrowsers, CaptchaError } from "./scraper/browser.js";
+import { closeAllBrowsers, CaptchaError, SessionExpiredError } from "./scraper/browser.js";
 import { updateSessionStatus, upsertSession } from "./db/sessions.js";
 import path from "node:path";
 import { sendLeboncoinMessage } from "./messenger/leboncoin.js";
@@ -65,21 +65,41 @@ async function handleMessage(messageId: number): Promise<void> {
     updateMessageStatus(db, messageId, "sent");
   } catch (error) {
     const errMsg = error instanceof Error ? error.message : String(error);
-    // CAPTCHA: keep message pending so it retries when session is restored
+
+    // CAPTCHA/Session expired: don't count as a retry — needs human action.
+    // Message stays pending; reEnqueuePending will retry once session is valid again.
     if (error instanceof CaptchaError) {
-      flagSessionCaptcha(error.platform);
+      flagSession(error.platform, "captcha_required");
       logger.warn({ messageId, platform: error.platform }, "Message send skipped — CAPTCHA required");
-      return; // message stays pending
+      return;
     }
-    logger.error({ messageId, error: errMsg }, "Message send failed");
+    if (error instanceof SessionExpiredError) {
+      flagSession(error.platform, "needs_check");
+      logger.warn({ messageId, platform: error.platform, reason: errMsg }, "Message send skipped — session likely expired");
+      return;
+    }
+
+    // Transient error: retry up to MAX_RETRIES with exponential-ish backoff via the queue's natural delay
+    const MAX_RETRIES = 3;
+    const retryCount = (msg.retry_count ?? 0) + 1;
+    if (retryCount < MAX_RETRIES) {
+      db.prepare("UPDATE messages_sent SET retry_count = ?, error = ? WHERE id = ?").run(retryCount, errMsg, messageId);
+      logger.warn({ messageId, retryCount, error: errMsg }, "Message send failed — will retry");
+      // Re-enqueue after the queue's finally block removes the dedup entry.
+      // Backoff: 30s × retryCount.
+      setTimeout(() => messageQueue.enqueue(messageId), 30_000 * retryCount);
+      return;
+    }
+
+    logger.error({ messageId, retryCount, error: errMsg }, "Message send failed permanently");
     updateMessageStatus(db, messageId, "failed", errMsg);
   }
 }
 
-function flagSessionCaptcha(platform: string): void {
+function flagSession(platform: string, status: string): void {
   const userDataDir = path.join(config.browserDataDir, platform);
   upsertSession(db, platform, userDataDir);
-  updateSessionStatus(db, platform, "captcha_required");
+  updateSessionStatus(db, platform, status);
 }
 
 const messageQueue = new MessageQueue(config.messaging, handleMessage);
@@ -118,7 +138,7 @@ async function scrapeCycle(): Promise<void> {
         } else {
           const reason = result.reason;
           if (reason instanceof CaptchaError) {
-            flagSessionCaptcha(reason.platform);
+            flagSession(reason.platform, "captcha_required");
             logger.warn({ platform: reason.platform, pref: pref.name }, "Scrape skipped — CAPTCHA required");
           } else {
             const errMsg = reason instanceof Error ? reason.message : String(reason);

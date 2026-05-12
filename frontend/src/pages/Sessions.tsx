@@ -36,6 +36,7 @@ export default function Sessions() {
           const statusClass =
             status === "valid" ? "bg-green-100 text-green-700"
             : status === "captcha_required" ? "bg-orange-100 text-orange-700"
+            : status === "needs_check" ? "bg-yellow-100 text-yellow-700"
             : status === "expired" ? "bg-red-100 text-red-700"
             : "bg-gray-100 text-gray-700";
 
@@ -44,7 +45,7 @@ export default function Sessions() {
               <div>
                 <span className="font-semibold capitalize">{platform}</span>
                 <span className={`ml-3 px-2 py-0.5 rounded text-xs ${statusClass}`}>
-                  {status === "captcha_required" ? "CAPTCHA à résoudre" : status}
+                  {status === "captcha_required" ? "CAPTCHA à résoudre" : status === "needs_check" ? "À vérifier" : status}
                 </span>
                 {session?.last_valid_at && (
                   <span className="ml-2 text-sm text-gray-500">
