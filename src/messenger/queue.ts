@@ -17,7 +17,9 @@ export class MessageQueue {
 
   constructor(
     private config: QueueConfig,
-    private handler: (messageId: number) => Promise<void>,
+    // Handler returns true if the message was actually sent (counts toward rate limit).
+    // Returns false for retries, CAPTCHA skips, session-expired skips — these don't count.
+    private handler: (messageId: number) => Promise<boolean>,
   ) {}
 
   enqueue(messageId: number): void {
@@ -68,12 +70,13 @@ export class MessageQueue {
     }
 
     const messageId = this.queue.shift()!;
+    let counted = false;
     try {
-      await this.handler(messageId);
+      counted = (await this.handler(messageId)) === true;
     } finally {
       this.known.delete(messageId);
     }
-    this.sentThisHour++;
+    if (counted) this.sentThisHour++;
 
     if (this.queue.length > 0 && !this.stopped) {
       const delay = this.config.delayMinMs + Math.random() * (this.config.delayMaxMs - this.config.delayMinMs);

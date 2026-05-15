@@ -22,19 +22,20 @@ import type { Listing } from "./db/listings.js";
 
 const db = getDb();
 
-// Message queue handler
-async function handleMessage(messageId: number): Promise<void> {
+// Message queue handler. Returns true if the message actually went out
+// (counts toward hourly rate limit). False for retries / CAPTCHA / session skips.
+async function handleMessage(messageId: number): Promise<boolean> {
   const msg = db.prepare("SELECT * FROM messages_sent WHERE id = ?").get(messageId) as any;
-  if (!msg || msg.status !== "pending") return;
+  if (!msg || msg.status !== "pending") return false;
 
   const listing = db.prepare("SELECT * FROM listings WHERE id = ?").get(msg.listing_id) as Listing;
-  if (!listing) return;
+  if (!listing) return false;
 
   const template = getDefaultTemplate(db);
   if (!template) {
     logger.warn("No default template configured");
     updateMessageStatus(db, messageId, "failed", "No default template");
-    return;
+    return false;
   }
 
   const messageBody = interpolateTemplate(template.body, {
@@ -49,7 +50,7 @@ async function handleMessage(messageId: number): Promise<void> {
   if (config.dryRun) {
     logger.info({ messageId, platform: listing.platform, method: msg.method, title: listing.title, messageBody }, "[DRY RUN] Message would be sent");
     updateMessageStatus(db, messageId, "sent");
-    return;
+    return true;
   }
 
   try {
@@ -63,6 +64,7 @@ async function handleMessage(messageId: number): Promise<void> {
       await sendEmail(listing.contact_email, `Re: ${listing.title}`, messageBody);
     }
     updateMessageStatus(db, messageId, "sent");
+    return true;
   } catch (error) {
     const errMsg = error instanceof Error ? error.message : String(error);
 
@@ -71,12 +73,12 @@ async function handleMessage(messageId: number): Promise<void> {
     if (error instanceof CaptchaError) {
       flagSession(error.platform, "captcha_required");
       logger.warn({ messageId, platform: error.platform }, "Message send skipped — CAPTCHA required");
-      return;
+      return false;
     }
     if (error instanceof SessionExpiredError) {
       flagSession(error.platform, "needs_check");
       logger.warn({ messageId, platform: error.platform, reason: errMsg }, "Message send skipped — session likely expired");
-      return;
+      return false;
     }
 
     // Transient error: retry up to MAX_RETRIES with exponential-ish backoff via the queue's natural delay
@@ -88,11 +90,12 @@ async function handleMessage(messageId: number): Promise<void> {
       // Re-enqueue after the queue's finally block removes the dedup entry.
       // Backoff: 30s × retryCount.
       setTimeout(() => messageQueue.enqueue(messageId), 30_000 * retryCount);
-      return;
+      return false;
     }
 
     logger.error({ messageId, retryCount, error: errMsg }, "Message send failed permanently");
     updateMessageStatus(db, messageId, "failed", errMsg);
+    return false;
   }
 }
 
