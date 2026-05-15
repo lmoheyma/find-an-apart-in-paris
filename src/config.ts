@@ -12,6 +12,10 @@ export const config = {
   polling: {
     intervalMs: Number(process.env.POLLING_INTERVAL_MS) || 90_000, // 1.5 min
   },
+  scrapers: {
+    leboncoinEnabled: process.env.LEBONCOIN_ENABLED !== "false",
+    selogerEnabled: process.env.SELOGER_ENABLED === "true",
+  },
   messaging: {
     maxPerHour: Number(process.env.MAX_MESSAGES_PER_HOUR) || 5,
     delayMinMs: 10_000,  // 10 sec

@@ -42,6 +42,7 @@ export interface Listing {
   city: string | null;
   discovered_at: string;
   message_status: string | null;
+  message_sent_at: string | null;
 }
 
 export interface Stats {

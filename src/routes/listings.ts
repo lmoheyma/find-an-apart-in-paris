@@ -5,6 +5,7 @@ import { getMessagesForListing, createMessage } from "../db/messages.js";
 import { getActivePreferences } from "../db/preferences.js";
 import { scrapeLeboncoinDeep } from "../scraper/leboncoin.js";
 import { scrapeSelogerDeep } from "../scraper/seloger.js";
+import { config } from "../config.js";
 import { logger } from "../logger.js";
 import type { ScrapedListing } from "../scraper/types.js";
 
@@ -39,8 +40,12 @@ export function createListingsRouter(db: Database.Database, enqueueMessage?: (id
       let totalScraped = 0;
       for (const pref of preferences) {
         const scrapePromises: Array<Promise<{ platform: string; listings: import("../scraper/types.js").ScrapedListing[] }>> = [];
-        if (pref.leboncoin_location) scrapePromises.push(scrapeLeboncoinDeep(pref).then(listings => ({ platform: "leboncoin", listings })));
-        if (pref.seloger_location) scrapePromises.push(scrapeSelogerDeep(pref).then(listings => ({ platform: "seloger", listings })));
+        if (config.scrapers.leboncoinEnabled && pref.leboncoin_location) {
+          scrapePromises.push(scrapeLeboncoinDeep(pref).then(listings => ({ platform: "leboncoin", listings })));
+        }
+        if (config.scrapers.selogerEnabled && pref.seloger_location) {
+          scrapePromises.push(scrapeSelogerDeep(pref).then(listings => ({ platform: "seloger", listings })));
+        }
         const results = await Promise.allSettled(scrapePromises);
 
         const allScraped: Array<{ platform: string; listing: ScrapedListing }> = [];

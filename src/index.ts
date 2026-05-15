@@ -124,10 +124,14 @@ async function scrapeCycle(): Promise<void> {
 
   for (const pref of preferences) {
     try {
-      // Scrape platforms (only if location is configured)
+      // Scrape platforms (only if enabled and location is configured)
       const scrapePromises: Array<Promise<{ platform: string; listings: ScrapedListing[] }>> = [];
-      if (pref.leboncoin_location) scrapePromises.push(scrapeLeboncoin(pref).then(listings => ({ platform: "leboncoin", listings })));
-      if (pref.seloger_location) scrapePromises.push(scrapeSeloger(pref).then(listings => ({ platform: "seloger", listings })));
+      if (config.scrapers.leboncoinEnabled && pref.leboncoin_location) {
+        scrapePromises.push(scrapeLeboncoin(pref).then(listings => ({ platform: "leboncoin", listings })));
+      }
+      if (config.scrapers.selogerEnabled && pref.seloger_location) {
+        scrapePromises.push(scrapeSeloger(pref).then(listings => ({ platform: "seloger", listings })));
+      }
       const results = await Promise.allSettled(scrapePromises);
 
       const allScraped: Array<{ platform: string; listing: ScrapedListing }> = [];

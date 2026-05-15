@@ -50,7 +50,12 @@ export function listingExists(db: Database.Database, platform: string, externalI
   return row !== undefined;
 }
 
-export function getListings(db: Database.Database, query: ListingsQuery): { listings: (Listing & { message_status: string | null })[]; total: number } {
+export type ListingWithMessage = Listing & {
+  message_status: string | null;
+  message_sent_at: string | null;
+};
+
+export function getListings(db: Database.Database, query: ListingsQuery): { listings: ListingWithMessage[]; total: number } {
   let where = "";
   const params: Record<string, unknown> = { limit: query.limit, offset: query.offset };
 
@@ -62,12 +67,13 @@ export function getListings(db: Database.Database, query: ListingsQuery): { list
   const total = (db.prepare(`SELECT COUNT(*) as count FROM listings l ${where}`).get(params) as { count: number }).count;
   const listings = db.prepare(`
     SELECT l.*,
-      (SELECT m.status FROM messages_sent m WHERE m.listing_id = l.id ORDER BY m.id DESC LIMIT 1) as message_status
+      (SELECT m.status FROM messages_sent m WHERE m.listing_id = l.id ORDER BY m.id DESC LIMIT 1) as message_status,
+      (SELECT m.sent_at FROM messages_sent m WHERE m.listing_id = l.id AND m.status = 'sent' ORDER BY m.id DESC LIMIT 1) as message_sent_at
     FROM listings l
     ${where}
     ORDER BY l.discovered_at DESC
     LIMIT @limit OFFSET @offset
-  `).all(params) as (Listing & { message_status: string | null })[];
+  `).all(params) as ListingWithMessage[];
 
   return { listings, total };
 }
